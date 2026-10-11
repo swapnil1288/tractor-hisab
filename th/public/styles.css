@@ -455,3 +455,34 @@ select.in{appearance:auto}
     justify-self: start;
   }
 }
+.contact-input {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.contact-input .pre {
+  flex: 1;
+  min-width: 0;
+}
+
+.contact-input .pre input {
+  width: 100%;
+  min-width: 0;
+}
+
+.contact-input .contact-btn {
+  flex-shrink: 0;
+  min-height: 48px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.contact-btn svg {
+  width: 20px;
+  height: 20px;
+}

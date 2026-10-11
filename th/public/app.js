@@ -751,9 +751,97 @@ function openPayment(id) {
 function openFarmer(id) {
   const s = overlay(), f = id ? s.farmers.find(x => x.id === id) : null;
   sheet(f ? t('editFarmer') : t('addFarmer'), `<label class="field"><span>${t('name')}</span><input class="in" id="fn" value="${esc(f ? f.name : '')}"></label><label class="field"><span>${t('village')}</span><input class="in" id="fv" value="${esc(f ? f.village || '' : '')}"></label>
-   <label class="field"><span>${t('mobileOpt')}</span><div class="pre"><span>+91</span><input class="in num" id="fm" inputmode="numeric" maxlength="10" value="${esc(f ? f.mobile || '' : '')}"></div></label>
+   <label class="field">
+  <span>${t('mobileOpt')}</span>
+  <div class="contact-input">
+    <div class="pre">
+      <span>+91</span>
+      <input class="in num" id="fm" type="tel"
+        inputmode="numeric" maxlength="10"
+        value="${esc(f ? f.mobile || '' : '')}">
+    </div>
+    <button class="btn sec contact-btn" type="button" id="pickContact">
+      ${I.users}<span>संपर्क</span>
+    </button>
+  </div>
+</label>
+
    ${f ? '' : `<label class="field"><span>${t('farms')}</span><input class="in" id="ff" placeholder="${t('farmName')}, ${t('farmName')}"></label>`}<div id="err"></div>`,
    `<button class="btn sec" data-close>${t('cancel')}</button><button class="btn pri" id="save">${t('save')}</button>`, (l, close) => {
+    $(l, '#pickContact').onclick = async () => {
+  if (!window.isSecureContext ||
+      !navigator.contacts ||
+      typeof navigator.contacts.select !== 'function') {
+    toast('या ब्राउझरमध्ये संपर्क निवडता येत नाही. नंबर कॉपी करून भरा.');
+    $(l, '#fm').focus();
+    return;
+  }
+
+  const button = $(l, '#pickContact');
+  button.disabled = true;
+
+  try {
+    const contacts = await navigator.contacts.select(
+      ['name', 'tel'],
+      { multiple: false }
+    );
+
+    if (!contacts.length || !l.isConnected) return;
+
+    const contact = contacts[0];
+
+    const numbers = [...new Set((contact.tel || []).map(raw => {
+      let number = String(raw).replace(/\D/g, '');
+      if (number.startsWith('0091') && number.length === 14) {
+        number = number.slice(4);
+      } else if (number.startsWith('91') && number.length === 12) {
+        number = number.slice(2);
+      } else if (number.startsWith('0') && number.length === 11) {
+        number = number.slice(1);
+      }
+      return number;
+    }).filter(number => /^[6-9]\d{9}$/.test(number)))];
+
+    if (!numbers.length) {
+      toast('या संपर्कात वैध भारतीय मोबाइल नंबर नाही.');
+      return;
+    }
+
+    let selected = numbers[0];
+
+    if (numbers.length > 1) {
+      const choice = window.prompt(
+        'नंबर निवडा:\n' +
+        numbers.map((number, i) => `${i + 1}. ${number}`).join('\n'),
+        '1'
+      );
+
+      if (choice === null) return;
+
+      const index = Number(choice) - 1;
+      if (!Number.isInteger(index) || !numbers[index]) {
+        toast('योग्य नंबर निवडा.');
+        return;
+      }
+
+      selected = numbers[index];
+    }
+
+    $(l, '#fm').value = selected;
+
+    if (!$(l, '#fn').value.trim() && contact.name?.[0]) {
+      $(l, '#fn').value = contact.name[0];
+    }
+
+    $(l, '#fm').dispatchEvent(new Event('input', { bubbles: true }));
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      toast('संपर्क उघडता आला नाही. नंबर manually भरा.');
+    }
+  } finally {
+    button.disabled = false;
+  }
+};
     $(l, '#save').onclick = () => {
       const name = $(l, '#fn').value.trim(), mob = $(l, '#fm').value.replace(/\D/g, '');
       if (!name) return errBox($(l, '#err'), te('REQUIRED')); if (mob && !/^[6-9]\d{9}$/.test(mob)) return errBox($(l, '#err'), te('MOBILE_INVALID'));
