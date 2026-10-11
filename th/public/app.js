@@ -202,6 +202,7 @@ function render() {
   app.innerHTML = (S.sessionExpired ? '' : '') + (views[V().name] || viewHome)(s) + nav();
   if (S.sessionExpired) $(app, 'main').insertAdjacentHTML('afterbegin', `<div class="banner err" role="alert">${t('sessionExpired')}<button class="btn sm pri" data-act="relogin">${t('loginBtn')}</button></div>`);
   bindAll(app); paintSync(); tick();
+  if (V().name === 'home') bindHomeBookings(app);
   if (V().name === 'farmers') bindFarmers(app, s);
   if (V().name === 'farmer') loadLedger(V().id);
 }
@@ -292,14 +293,88 @@ function payRow(p, s, showFarmer) {
   return `<button class="row" data-act="payment" data-id="${p.id}"><span class="pic">${P.cash}</span><span class="row-m"><span class="row-t">${t('payment')} · ${t(p.mode)}${pendTag(p)}</span><span class="row-s">${esc([showFarmer && f ? f.name : null, fmtDate(p.paid_on), p.reference].filter(Boolean).join(' · '))}</span></span>
    <span class="row-e"><b class="num ${p.status === 'voided' ? 'muted' : 'c-ok'}" ${p.status === 'voided' ? 'style="text-decoration:line-through"' : ''}>${money(p.amount_paise)}</b>${p.status === 'voided' ? `<span class="chip due">${t('cancelled')}</span>` : ''}</span></button>`;
 }
+
+let homeBookingDate = '';
+
+function homeBookings(s) {
+  const today = todayIST();
+
+  const upcoming = s.jobs
+    .filter(j => j.status === 'booked' && j.scheduled_date >= today)
+    .sort((a, b) =>
+      a.scheduled_date.localeCompare(b.scheduled_date) ||
+      String(a.id).localeCompare(String(b.id))
+    );
+
+  const visible = homeBookingDate
+    ? upcoming.filter(j => j.scheduled_date === homeBookingDate)
+    : upcoming;
+
+  const groups = new Map();
+  visible.forEach(j => {
+    if (!groups.has(j.scheduled_date)) groups.set(j.scheduled_date, []);
+    groups.get(j.scheduled_date).push(j);
+  });
+
+  return `
+    <section style="margin-top:20px">
+      <h2 class="sec">${t('upcomingBookings')}</h2>
+
+      <div class="card">
+        <label class="field">
+          <span>${t('filterBookingDate')}</span>
+          <input class="in" type="date" id="homeBookingDate"
+            min="${today}" value="${esc(homeBookingDate)}">
+        </label>
+
+        <button class="fchip ${homeBookingDate ? '' : 'on'}"
+          id="allUpcomingBookings" type="button">
+          ${t('allUpcoming')}
+        </button>
+
+        <p role="status" aria-live="polite">
+          ${t('totalBookings')}: <b class="num">${visible.length}</b>
+        </p>
+      </div>
+
+      ${visible.length
+        ? [...groups].map(([date, jobs]) => `
+            <h3 class="sec">
+              ${fmtDate(date)}
+              <span class="chip adv">${jobs.length}</span>
+            </h3>
+            <div class="list">
+              ${jobs.map(j => jobRow(j, s, true)).join('')}
+            </div>
+          `).join('')
+        : `<div class="card empty">
+            <p>${t('noUpcomingBookings')}</p>
+          </div>`}
+    </section>`;
+}
+
+function bindHomeBookings(app) {
+  const input = $(app, '#homeBookingDate');
+  const reset = $(app, '#allUpcomingBookings');
+
+  if (input) input.onchange = () => {
+    homeBookingDate = input.value;
+    render();
+  };
+
+  if (reset) reset.onclick = () => {
+    homeBookingDate = '';
+    render();
+  };
+}
+
 function viewHome(s) {
   const out = s.farmers.reduce((a, f) => a + f.outstandingPaise, 0), rec = s.payments.filter(p => p.status !== 'voided').reduce((a, p) => a + p.amount_paise, 0), cr = s.farmers.reduce((a, f) => a + f.creditPaise, 0);
   const nOut = s.farmers.filter(f => f.outstandingPaise > 0).length, nCr = s.farmers.filter(f => f.creditPaise > 0).length;
   const running = s.jobs.filter(j => j.status === 'running');
   const awaitingConfirm = s.jobs.filter(j => j.status === 'completed');
   const confirmed = s.jobs.filter(j => j.status === 'confirmed');
-  const today = todayIST();
-  const booked = s.jobs.filter(j => j.status === 'booked' && (!j.scheduled_date || j.scheduled_date === today));
+  
   const top = s.farmers.filter(f => f.outstandingPaise > 0).sort((a, b) => b.outstandingPaise - a.outstandingPaise).slice(0, 4);
   const pendMoney = s.farmers.some(f => f._pendingMoney);
   return bar({ title: s.business.name || t('app'), sub: s.business.owner_name ? `${t('hello')}, ${s.business.owner_name}` : '' }) + `<main class="wrap">
@@ -307,8 +382,9 @@ function viewHome(s) {
    <div><div class="hero-l">${t('received')}</div><div class="hero-a num" style="font-size:28px">${money(rec)}</div><div class="hero-s">${t('forN', { n: s.payments.filter(p => p.status !== 'voided').length || 0 })}</div></div>
    <div><div class="hero-l">${t('credit')}</div><div class="hero-a num" style="font-size:28px">${money(cr)}</div><div class="hero-s">${t('forN', { n: nCr })}</div></div></div>${pendMoney ? `<div class="hero-s" style="margin-top:8px">* ${t('pendingBal')}</div>` : ''}</section>
   <div class="cta2"><button class="cta work" data-act="work"><span class="cta-i">${P.tractor}</span><span>${t('newWork')}</span></button><button class="cta pay" data-act="pay"><span class="cta-i">${P.cash}</span><span>${t('receivePay')}</span></button></div>
+  ${homeBookings(s)}
   ${running.map(j => { const f = s.farmers.find(x => x.id === j.farmer_id); return `<div class="running"><span class="pic">${P.clock}</span><span class="row-m"><span class="row-t">${esc(f ? f.name : '')} · ${esc(j.implement_name)}${pendTag(j)}</span><span class="timer" data-since="${j.start_at}">0:00:00</span><span class="row-s">${t('start')} ${hmIST(j.start_at)}</span></span><button class="btn acc" data-act="finish" data-id="${j.id}">${I.stop}${t('finishWork')}</button></div>`; }).join('')}
-  ${booked.length ? `<h2 class="sec">${t('booked')}</h2><div class="list">${booked.map(j => jobRow(j, s, true)).join('')}</div>` : ''}
+ 
   ${!s.farmers.length ? `<div class="card empty-hero" style="margin-top:16px">${P.field}<h2>${t('noFarmers')}</h2><button class="btn pri block" data-act="addFarmer">${I.userPlus}${t('addFirstFarmer')}</button></div>` : ''}
   </main>`;
 }
