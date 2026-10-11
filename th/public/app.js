@@ -317,10 +317,10 @@ function homeBookings(s) {
   });
 
   return `
-    <section style="margin-top:20px">
+    <section class="booking-section">
       <h2 class="sec">${t('upcomingBookings')}</h2>
 
-      <div class="card">
+      <div class="card booking-filter">
         <label class="field">
           <span>${t('filterBookingDate')}</span>
           <input class="in" type="date" id="homeBookingDate"
@@ -332,7 +332,7 @@ function homeBookings(s) {
           ${t('allUpcoming')}
         </button>
 
-        <p role="status" aria-live="polite">
+        <p class="booking-count" role="status" aria-live="polite">
           ${t('totalBookings')}: <b class="num">${visible.length}</b>
         </p>
       </div>
