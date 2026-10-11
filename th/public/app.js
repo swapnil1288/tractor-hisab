@@ -92,6 +92,25 @@ function overlay() {
           meter_reset: b.meterReset ?? j.meter_reset, meter_note: b.meterNote ?? j.meter_note, qty_hundredths: b.qty != null ? B.qtyToHundredths(b.qty) : j.qty_hundredths, version: j.version + 1, ...pend });
         const p = previewOf(j); j.billable_minutes = p.billableMinutes; j.charge_paise = p.chargePaise; break; }
       case 'job.confirm': { const j = J(op.ref.id); if (j && j.status !== 'confirmed') { j.status = 'confirmed'; j._pending = op.status; bal(j.farmer_id, b.expectedChargePaise); } break; }
+      
+      case 'job.delete': {
+          const j = J(op.ref.id);
+
+          if (j && ['booked', 'running', 'completed', 'confirmed'].includes(j.status)) {
+            if (j.status === 'confirmed') {
+              bal(j.farmer_id, -j.charge_paise);
+            }
+
+            Object.assign(j, {
+              status: 'cancelled',
+              cancel_reason: '[deleted] ' + b.reason,
+              ...pend
+            });
+          }
+
+          break;
+        }
+      
       case 'job.cancel': { const j = J(op.ref.id); if (j) Object.assign(j, { status: 'cancelled', ...pend }); break; }
       case 'job.correct': { const j = J(op.ref.id); if (j) { j.status = 'superseded'; bal(j.farmer_id, -j.charge_paise); const n = { ...j, id: b.newId, status: 'confirmed', corrected_from: j.id, start_at: b.startAt ?? j.start_at, end_at: b.endAt ?? j.end_at, break_minutes: b.breakMinutes ?? j.break_minutes, qty_hundredths: b.qty != null ? B.qtyToHundredths(b.qty) : j.qty_hundredths, applied_rate_paise: b.ratePaise ?? j.applied_rate_paise, ...pend }; const p = previewOf(n); n.charge_paise = p.chargePaise; n.billable_minutes = p.billableMinutes; s.jobs.unshift(n); bal(j.farmer_id, p.chargePaise || 0); } break; }
       case 'payment.create': s.payments.unshift({ id: b.id, farmer_id: b.farmerId, amount_paise: b.amountPaise, mode: b.mode, reference: b.reference, paid_on: b.paidOn, note: b.note, status: 'active', created_at: op.createdAt, ...pend }); bal(b.farmerId, -b.amountPaise); break;
@@ -344,7 +363,12 @@ async function loadLedger(fid) {
 }
 let eTab = 'job';
 function viewEntries(s) {
-  const rows = eTab === 'job' ? s.jobs.filter(j => j.status !== 'superseded') : s.payments;
+  const rows = eTab === 'job'
+  ? s.jobs.filter(j =>
+      j.status !== 'superseded' &&
+      !(j.cancel_reason || '').startsWith('[deleted] ')
+    )
+  : s.payments;
   return bar({ title: t('entries') }) + `<main class="wrap"><div class="seg" role="tablist"><button data-et="job" class="${eTab === 'job' ? 'on' : ''}">${I.tractor}${t('newWork').split(' ').pop()}</button><button data-et="pay" class="${eTab === 'pay' ? 'on' : ''}">${I.rupee}${t('payment')}</button></div>
   ${rows.length ? `<div class="list">${rows.map(r => eTab === 'job' ? jobRow(r, s, true) : payRow(r, s, true)).join('')}</div>` : `<div class="card empty"><p>${t('none')}</p></div>`}</main>`;
 }
@@ -519,15 +543,82 @@ function openJob(id) {
   if (j.status === 'completed') return openConfirm(id);
   if (j.status === 'running') return openFinish(id);
   const f = s.farmers.find(x => x.id === j.farmer_id);
-  const acts = { booked: `<button class="btn sec" id="cx">${t('cancelJob')}</button><button class="btn pri" id="go">${I.play}${t('startNow')}</button>`, confirmed: `<button class="btn sec" id="cr">${I.edit}${t('correct')}</button>` }[j.status] || '';
+  const acts = { booked: `<button class="btn sec" id="cx">${t('cancelJob')}</button><button class="btn pri" id="go">${I.play}${t('startNow')}</button>`, confirmed: `<button class="btn sec" id="cr">${I.edit}${t('correct')}</button>
+<button class="btn danger" id="delJob">${t('deleteEntry')}</button>` }[j.status] || '';
   sheet(j.implement_name, `<div class="kvl"><div><span>${t('farmer')}</span><b>${esc(f ? f.name : '')}</b></div><div><span>${t('date')}</span><b>${fmtDate(j.start_at ? dIST(j.start_at) : j.scheduled_date)}</b></div>${j.start_at ? `<div><span>${t('start')}–${t('end')}</span><b class="num">${hmIST(j.start_at)}–${hmIST(j.end_at)}</b></div>` : ''}
    ${j.billable_minutes != null ? `<div><span>${t('billable')}</span><b class="num">${fmtMin(j.billable_minutes)}</b></div>` : ''}<div><span>${t('appliedRate')}</span><b class="num">${money(j.applied_rate_paise)} ${rateL(j.rate_type)}</b></div>
    ${j.charge_paise != null ? `<div><span>${t('charge')}</span><b class="tot num">${money(j.charge_paise)}</b></div>` : ''}<div><span></span>${statusChip(j)}</div></div>`, acts, (l, close) => {
     const go_ = $(l, '#go'); if (go_) go_.onclick = () => { enqueue('job.start', 'POST', `/api/jobs/${j.id}/start`, { version: j.version, startAt: nowMinuteISO(), meterStart: j.meter_start ?? (lastMeter(s, j.tractor_id) || undefined) }, { id: j.id, farmerId: j.farmer_id }); close(); };
     const cx = $(l, '#cx'); if (cx) cx.onclick = () => { close(); reasonSheet(t('cancelJob'), t('cancelReason'), r => enqueue('job.cancel', 'POST', `/api/jobs/${j.id}/cancel`, { reason: r }, { id: j.id, farmerId: j.farmer_id }), 3); };
+    
+    const del = $(l, '#delJob');
+
+      if (del) del.onclick = () => {
+        close();
+        openDeleteJob(j.id);
+      };
+    
     const cr = $(l, '#cr'); if (cr) cr.onclick = () => { close(); openCorrect(j.id); };
   });
 }
+
+function openDeleteJob(id) {
+  const s = overlay();
+  const j = s.jobs.find(x => x.id === id);
+  if (!j || j.status !== 'confirmed') return;
+
+  const f = s.farmers.find(x => x.id === j.farmer_id);
+
+  sheet(
+    t('deleteEntry'),
+    `<p class="help">${t('deleteEntryHelp')}</p>
+     <div class="kvl">
+       <div>
+         <span>${t('farmer')}</span>
+         <b>${esc(f ? f.name : '')}</b>
+       </div>
+       <div>
+         <span>${t('implement')}</span>
+         <b>${esc(j.implement_name)}</b>
+       </div>
+       <div>
+         <span>${t('charge')}</span>
+         <b>${money(j.charge_paise)}</b>
+       </div>
+     </div>
+     <label class="field">
+       <span>${t('deleteReason')}</span>
+       <input class="in" id="deleteReason" maxlength="200">
+     </label>
+     <div id="err"></div>`,
+    `<button class="btn sec" data-close>${t('cancel')}</button>
+     <button class="btn danger" id="confirmDelete">
+       ${t('deleteEntry')}
+     </button>`,
+    (l, close) => {
+      $(l, '#confirmDelete').onclick = () => {
+        const reason = $(l, '#deleteReason').value.trim();
+
+        if (reason.length < 5) {
+          return errBox($(l, '#err'), te('REQUIRED'));
+        }
+
+        $(l, '#confirmDelete').disabled = true;
+
+        enqueue(
+          'job.delete',
+          'POST',
+          `/api/jobs/${j.id}/delete`,
+          { version: j.version, reason },
+          { id: j.id, farmerId: j.farmer_id }
+        );
+
+        close();
+      };
+    }
+  );
+}
+
 function openCorrect(id) {
   const s = overlay(), j = s.jobs.find(x => x.id === id);
   sheet(t('correct'), `<p class="help">${t('correctHelp')}</p>${timesForm(j)}<label class="field"><span>${t('appliedRate')} (₹)</span><input class="in num" id="rt" inputmode="decimal" value="${(j.applied_rate_paise / 100).toFixed(2)}"></label><label class="field"><span>${t('correctReason')}</span><input class="in" id="rs"></label><div id="pv"></div><div id="err"></div>`,
@@ -660,7 +751,7 @@ function opLabel(o, s) {
   const b = o.body || {}, f = s && s.farmers.find(x => x.id === (b.farmerId || (o.ref && o.ref.farmerId)));
   const who = f ? ' · ' + f.name : '';
   return ({ 'farmer.create': t('addFarmer') + ' · ' + (b.name || ''), 'farmer.update': t('editFarmer'), 'farm.create': t('addFarm') + ' · ' + (b.name || ''), 'job.create': t('newWork') + who, 'job.start': t('startNow') + who, 'job.complete': t('finishWork') + who,
-    'job.update': t('edit') + who, 'job.confirm': t('confirmed') + ' ' + money(b.expectedChargePaise) + who, 'job.cancel': t('cancelJob') + who, 'job.correct': t('correct') + who, 'payment.create': t('payment') + ' ' + money(b.amountPaise) + who, 'payment.void': t('voidPay') + who,
+    'job.delete': t('deleteEntry') + who,'job.update': t('edit') + who, 'job.confirm': t('confirmed') + ' ' + money(b.expectedChargePaise) + who, 'job.cancel': t('cancelJob') + who, 'job.correct': t('correct') + who, 'payment.create': t('payment') + ' ' + money(b.amountPaise) + who, 'payment.void': t('voidPay') + who,
     'tractor.create': t('addTractor'), 'implement.create': t('addImpl') + ' · ' + (b.name || ''), 'implement.update': t('implements'), 'business.update': t('business') }[o.kind] || o.kind);
 }
 function openOutbox() {

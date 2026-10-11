@@ -339,6 +339,51 @@ function createApp({ pool, env = process.env }) {
     await audit(c, req, 'confirm_charge', 'job', j.id, j, a);
     return { body: { job: a, entry } };
   }));
+
+app.post('/api/jobs/:id/delete', owner, mut(async (req, c) => {
+  const j = await jobOf(c, req.biz, req.params.id);
+
+  if (!['booked', 'running', 'completed', 'confirmed'].includes(j.status)) {
+    throw new HttpError(409, 'BAD_STATE', { status: j.status });
+  }
+
+  checkVersion(j, req.body.version);
+  const reason = str(req.body.reason, 'reason', 5, 200);
+
+  if (j.status === 'confirmed') {
+    const orig = (await c.query(
+      "select * from ledger_entries where job_id=$1 and kind='charge'",
+      [j.id]
+    )).rows[0];
+
+    if (!orig) {
+      throw new HttpError(409, 'BAD_STATE', { status: j.status });
+    }
+
+    await ledgerAdd(c, {
+      biz: req.biz,
+      farmer: j.farmer_id,
+      kind: 'reversal',
+      amount: -orig.amount_paise,
+      reverses: orig.id,
+      job: null,
+      date: orig.entry_date,
+      memo: 'नोंद हटवली: ' + reason
+    });
+  }
+
+  const a = (await c.query(
+    `update jobs
+     set status='cancelled', cancel_reason=$2,
+         version=version+1, updated_at=now()
+     where id=$1 returning *`,
+    [j.id, '[deleted] ' + reason]
+  )).rows[0];
+
+  await audit(c, req, 'delete', 'job', j.id, j, a, reason);
+  return { body: { job: a } };
+}));
+
   app.post('/api/jobs/:id/cancel', owner, mut(async (req, c) => {
     const j = await jobOf(c, req.biz, req.params.id);
     if (!['booked', 'running', 'completed'].includes(j.status)) throw new HttpError(409, 'BAD_STATE', { status: j.status });
