@@ -1,0 +1,16 @@
+{
+  "name": "tractor-hisab",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tractor Hisab – work, billing and payment records for tractor owners (Marathi / Hindi / English)",
+  "main": "server/index.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server/index.js",
+    "migrate": "node server/db.js",
+    "seed:demo": "node scripts/seed-demo.js",
+    "test": "node --test --test-concurrency=1 test/billing.test.js test/api.test.js",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js"
+  },
+  "dependencies": { "express": "4.21.2", "pg": "8.13.1", "playwright-core": "1.48.2" }
+}
