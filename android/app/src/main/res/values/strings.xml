@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">ट्रॅक्टर हिशोब</string>
+    <string name="retry">पुन्हा प्रयत्न करा / Retry</string>
+    <string name="load_error">अॅप उघडता आले नाही. इंटरनेट तपासा आणि पुन्हा प्रयत्न करा.</string>
+    <string name="saved">फाईल जतन झाली / File saved</string>
+    <string name="save_failed">फाईल जतन करता आली नाही / Could not save file</string>
+    <string name="unsupported">Android System WebView अपडेट करा / Update Android System WebView</string>
+    <string name="no_handler">हे उघडण्यासाठी अॅप उपलब्ध नाही / No app available</string>
+</resources>
