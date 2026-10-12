@@ -671,7 +671,9 @@ async function loadLedger(fid) {
   draw(S.ledgers[fid] || LS.get(k('ledger:' + fid), null));
   try { const d = await api('GET', `/api/farmers/${fid}/ledger`); S.ledgers[fid] = d; LS.set(k('ledger:' + fid), d); draw(d); } catch (_) { if (!S.ledgers[fid] && !LS.get(k('ledger:' + fid), null)) draw(null); }
 }
-let eTab = 'job';
+
+
+/*let eTab = 'job';
 function viewEntries(s) {
   const rows = eTab === 'job'
   ? s.jobs.filter(j =>
@@ -683,8 +685,284 @@ function viewEntries(s) {
   ${rows.length ? `<div class="list">${rows.map(r => eTab === 'job' ? jobRow(r, s, true) : payRow(r, s, true)).join('')}</div>` : `<div class="card empty"><p>${t('none')}</p></div>`}</main>`;
 }
 
+*/
+let eTab = 'job';
+let entriesSearch = '';
 
+function entriesLabel(mr, hi, en) {
+  return lang === 'mr' ? mr : lang === 'hi' ? hi : en;
+}
 
+function entriesFiltered(s) {
+  const farmers = new Map(s.farmers.map(f => [f.id, f]));
+  const query = entriesSearch.trim().toLocaleLowerCase();
+  const digits = query.replace(/\D/g, '');
+
+  const rows = eTab === 'job'
+    ? s.jobs.filter(j =>
+        j.status !== 'superseded' &&
+        !(j.cancel_reason || '').startsWith('[deleted] ')
+      )
+    : s.payments.filter(p => p.status === 'active');
+
+  return rows.filter(r => {
+    if (!query) return true;
+
+    const farmer = farmers.get(r.farmer_id);
+    const name = String(farmer?.name || '').toLocaleLowerCase();
+    const phone = String(farmer?.mobile || '').replace(/\D/g, '');
+
+    return name.includes(query) ||
+      (digits.length > 0 && /^[\d\s()+-]+$/.test(query) &&
+        phone.includes(digits));
+  });
+}
+
+function entriesTotals(rows) {
+  if (eTab === 'pay') {
+    return {
+      amount: rows.reduce((n, p) => n + Number(p.amount_paise || 0), 0),
+      pending: 0
+    };
+  }
+
+  // Only confirmed bills count toward the final total.
+  return {
+    amount: rows
+      .filter(j => j.status === 'confirmed')
+      .reduce((n, j) => n + Number(j.charge_paise || 0), 0),
+    pending: rows.filter(j => j.status === 'completed').length
+  };
+}
+
+function entriesResultHtml(s) {
+  const rows = entriesFiltered(s);
+  const total = entriesTotals(rows);
+
+  const label = eTab === 'pay'
+    ? entriesLabel('एकूण जमा', 'कुल जमा', 'Total received')
+    : entriesLabel(
+        'एकूण पुष्टी केलेले बिल',
+        'कुल पुष्टि किए गए बिल',
+        'Total confirmed bills'
+      );
+
+  return `
+    <div class="card form" style="margin-bottom:16px" role="status">
+      <div class="muted">${label}</div>
+      <strong class="num" style="font-size:28px">
+        ${money(total.amount)}
+      </strong>
+      <p class="help">
+        ${rows.length}
+        ${entriesLabel('नोंदी', 'एंट्री', 'entries')}
+        ${entriesSearch.trim()
+          ? ' · ' + entriesLabel(
+              'शोधलेल्या नोंदींची रक्कम',
+              'खोजी गई एंट्री का कुल',
+              'Filtered results'
+            )
+          : ''}
+      </p>
+      ${total.pending ? `
+        <p class="help">
+          ${total.pending}
+          ${entriesLabel(
+            'कामांची बिल पुष्टी बाकी; एकूण रकमेत धरलेली नाहीत.',
+            'काम के बिल की पुष्टि बाकी है; कुल में शामिल नहीं हैं.',
+            'completed jobs await bill confirmation and are excluded from total.'
+          )}
+        </p>` : ''}
+    </div>
+
+    ${rows.length
+      ? `<div class="list">
+          ${rows.map(r =>
+            eTab === 'job'
+              ? jobRow(r, s, true)
+              : payRow(r, s, true)
+          ).join('')}
+        </div>`
+      : `<div class="card empty">
+          <p>${entriesLabel(
+            'नोंद सापडली नाही.',
+            'कोई एंट्री नहीं मिली.',
+            'No entries found.'
+          )}</p>
+        </div>`}
+  `;
+}
+
+function viewEntries(s) {
+  return bar({ title: t('entries') }) + `
+    <main class="wrap">
+      <div class="seg" role="tablist">
+        <button data-et="job"
+          class="${eTab === 'job' ? 'on' : ''}">
+          ${I.tractor}${t('newWork').split(' ').pop()}
+        </button>
+        <button data-et="pay"
+          class="${eTab === 'pay' ? 'on' : ''}">
+          ${I.rupee}${t('payment')}
+        </button>
+      </div>
+
+      <div class="card form" style="margin:16px 0">
+        <label class="field">
+          <span>${entriesLabel(
+            'नाव किंवा मोबाईल नंबरने शोधा',
+            'नाम या मोबाइल नंबर से खोजें',
+            'Search by name or mobile number'
+          )}</span>
+          <input class="in" id="entriesSearch" type="search"
+            autocomplete="off"
+            value="${esc(entriesSearch)}"
+            placeholder="${entriesLabel(
+              'शेतकऱ्याचे नाव / मोबाईल नंबर',
+              'किसान का नाम / मोबाइल नंबर',
+              'Farmer name / mobile number'
+            )}">
+        </label>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sec" type="button" id="entriesDownload">
+            ${I.down}
+            ${entriesLabel(
+              'डाउनलोड CSV', 'डाउनलोड CSV', 'Download CSV'
+            )}
+          </button>
+          <button class="btn ghost" type="button" id="entriesClear">
+            ${entriesLabel(
+              'शोध साफ करा', 'खोज साफ करें', 'Clear search'
+            )}
+          </button>
+        </div>
+        <p class="help">
+          ${entriesLabel(
+            'स्क्रीनवरील शोधलेल्या नोंदी डाउनलोड होतील.',
+            'स्क्रीन पर दिख रही खोजी गई एंट्री डाउनलोड होंगी.',
+            'Downloads the entries matching the current search.'
+          )}
+        </p>
+      </div>
+
+      <div id="entriesResults">${entriesResultHtml(s)}</div>
+    </main>`;
+}
+
+function downloadEntriesCsv() {
+  const s = overlay();
+  const rows = entriesFiltered(s);
+
+  if (!rows.length) {
+    toast(entriesLabel(
+      'डाउनलोडसाठी नोंदी नाहीत.',
+      'डाउनलोड के लिए कोई एंट्री नहीं है.',
+      'No entries to download.'
+    ));
+    return;
+  }
+
+  const farmers = new Map(s.farmers.map(f => [f.id, f]));
+  const farms = new Map(s.farms.map(f => [f.id, f]));
+  const tractors = new Map(s.tractors.map(t => [t.id, t]));
+
+  const headers = [
+    'Date', 'Farmer name', 'Mobile', 'Farm',
+    'Tractor', 'Work / Payment mode', 'Status',
+    'Confirmed amount INR'
+  ];
+
+  const data = rows.map(r => {
+    const farmer = farmers.get(r.farmer_id) || {};
+
+    if (eTab === 'pay') {
+      return [
+        r.paid_on,
+        farmer.name || '',
+        farmer.mobile ? '+91 ' + farmer.mobile : '',
+        '', '', r.mode, r.status,
+        Number(r.amount_paise || 0) / 100
+      ];
+    }
+
+    return [
+      r.end_at ? dIST(r.end_at)
+        : r.start_at ? dIST(r.start_at)
+        : r.scheduled_date || '',
+      farmer.name || '',
+      farmer.mobile ? '+91 ' + farmer.mobile : '',
+      farms.get(r.farm_id)?.name || '',
+      tractors.get(r.tractor_id)?.name || '',
+      r.implement_name || '',
+      r.status,
+      r.status === 'confirmed'
+        ? Number(r.charge_paise || 0) / 100
+        : ''
+    ];
+  });
+
+  data.push([
+    '', 'TOTAL', '', '', '', '', '',
+    entriesTotals(rows).amount / 100
+  ]);
+
+  // Protect text cells against spreadsheet formula execution.
+  const cell = value => {
+    let text = typeof value === 'number'
+      ? value.toFixed(2)
+      : String(value ?? '');
+
+    if (typeof value !== 'number' &&
+        /^\s*[=+\-@]/.test(text)) {
+      text = "'" + text;
+    }
+
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
+
+  const csv = '\uFEFF' + [headers, ...data]
+    .map(row => row.map(cell).join(','))
+    .join('\r\n');
+
+  const blob = new Blob([csv], {
+    type: 'text/csv;charset=utf-8'
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download =
+    `tractor-hisab-${eTab === 'pay' ? 'payments' : 'work'}-${todayIST()}.csv`;
+
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+document.addEventListener('input', e => {
+  if (e.target.id !== 'entriesSearch') return;
+
+  entriesSearch = e.target.value;
+  const results = document.getElementById('entriesResults');
+  if (results) results.innerHTML = entriesResultHtml(overlay());
+});
+
+document.addEventListener('click', e => {
+  if (e.target.closest('#entriesDownload')) {
+    downloadEntriesCsv();
+  }
+
+  if (e.target.closest('#entriesClear')) {
+    entriesSearch = '';
+    const input = document.getElementById('entriesSearch');
+    if (input) input.value = '';
+
+    const results = document.getElementById('entriesResults');
+    if (results) results.innerHTML = entriesResultHtml(overlay());
+  }
+});
 
 function viewMore(s) {
   return bar({ title: t('more') }) + `<main class="wrap">
