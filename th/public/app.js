@@ -210,7 +210,7 @@ let tickT = null;
 function tick() { clearInterval(tickT); const els = $$(document, '[data-since]'); if (!els.length) return; const f = () => els.forEach(e => { const m = Math.max(0, Math.floor((Date.now() - new Date(e.dataset.since)) / 1000)); e.textContent = `${Math.floor(m / 3600)}:${String(Math.floor(m / 60) % 60).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; }); f(); tickT = setInterval(f, 1000); }
 
 /* ================= AUTH ================= */
-let authMode = 'login';
+/*let authMode = 'login';
 function langSeg() { return `<div class="lang">${['mr', 'hi', 'en'].map(l => `<button class="fchip ${lang === l ? 'on' : ''}" data-lang="${l}">${{ mr: 'मराठी', hi: 'हिंदी', en: 'English' }[l]}</button>`).join('')}</div>`; }
 function viewAuth() {
   const reg = authMode === 'register';
@@ -233,7 +233,241 @@ function bindAuth(app) {
     try { await api('POST', authMode === 'register' ? '/api/auth/register' : '/api/auth/login', d); await boot(); }
     catch (err) { $(app, '#authErr').innerHTML = `<div class="note err">${esc(err.network ? te('NETWORK') : errText(err))}</div>`; btn.disabled = false; }
   };
+}*/
+let authMode = 'login';
+let resetMobile = '';
+let resetDevCode = '';
+
+function authLabel(mr, hi, en) {
+  return lang === 'mr' ? mr : lang === 'hi' ? hi : en;
 }
+
+function langSeg() {
+  return `<div class="lang">${['mr', 'hi', 'en'].map(l =>
+    `<button class="fchip ${lang === l ? 'on' : ''}" data-lang="${l}">
+      ${{ mr: 'मराठी', hi: 'हिंदी', en: 'English' }[l]}
+    </button>`
+  ).join('')}</div>`;
+}
+
+function viewAuth() {
+  const reg = authMode === 'register';
+  const forgot = authMode === 'forgot';
+  const reset = authMode === 'reset';
+
+  const mobileField = `
+    <label class="field">
+      <span>${t('mobile')}</span>
+      <div class="pre"><span>+91</span>
+        <input class="in num" name="mobile" inputmode="numeric"
+          maxlength="10" autocomplete="tel-national" required
+          value="${forgot || reset ? esc(resetMobile) : ''}"
+          ${reset ? 'readonly' : ''}>
+      </div>
+    </label>`;
+
+  const passwordField = `
+    <label class="field">
+      <span>${reset
+        ? authLabel('नवीन पासवर्ड', 'नया पासवर्ड', 'New password')
+        : t('password')}</span>
+      <input class="in" name="password" type="password"
+        autocomplete="${reg || reset ? 'new-password' : 'current-password'}"
+        required minlength="8" maxlength="200">
+      ${reg || reset ? `<p class="help">${t('passwordHint')}</p>` : ''}
+    </label>`;
+
+  const submitLabel = forgot ? t('sendOtp') :
+    reset ? authLabel('पासवर्ड बदला', 'पासवर्ड बदलें', 'Reset password') :
+    reg ? t('registerBtn') : t('loginBtn');
+
+  return `<main class="auth">
+    <img class="logo" src="/icons/logo.svg" alt="">
+    <h1>${t('app')}</h1><p class="sub">${t('ownerSub')}</p>
+    ${langSeg()}
+    <form class="card form" id="authF">
+      ${reg ? `
+        <label class="field"><span>${t('businessName')}</span>
+          <input class="in" name="businessName" required
+            autocomplete="organization"></label>
+        <label class="field"><span>${t('ownerName')}</span>
+          <input class="in" name="ownerName" required
+            autocomplete="name"></label>
+        <label class="field"><span>${t('village')}</span>
+          <input class="in" name="village"></label>` : ''}
+
+      ${mobileField}
+
+      ${reset ? `
+        <p class="help">${t('otpSent')}</p>
+        ${resetDevCode
+          ? `<p class="help">Local test OTP: ${esc(resetDevCode)}</p>` : ''}
+        <label class="field"><span>${t('otp')}</span>
+          <input class="in num" name="code" inputmode="numeric"
+            autocomplete="one-time-code" required
+            minlength="6" maxlength="6" pattern="[0-9]{6}"></label>
+      ` : ''}
+
+      ${forgot ? '' : passwordField}
+
+      ${reset ? `
+        <label class="field">
+          <span>${authLabel(
+            'पासवर्ड पुन्हा लिहा', 'पासवर्ड दोबारा लिखें', 'Confirm password'
+          )}</span>
+          <input class="in" name="confirmPassword" type="password"
+            autocomplete="new-password" required
+            minlength="8" maxlength="200">
+        </label>` : ''}
+
+      ${reg ? `
+        <label class="field"><span>${t('setupCode')}</span>
+          <input class="in" name="setupCode" autocomplete="off">
+        </label>` : ''}
+
+      <div id="authErr" role="alert"></div>
+      <button class="btn pri block" type="submit">${submitLabel}</button>
+
+      ${authMode === 'login' ? `
+        <button class="btn ghost block" type="button" id="forgotPassword">
+          ${authLabel(
+            'पासवर्ड विसरलात?', 'पासवर्ड भूल गए?', 'Forgot password?'
+          )}
+        </button>` : ''}
+
+      ${forgot || reset ? `
+        <button class="btn ghost block" type="button" id="backLogin">
+          ${authLabel(
+            'लॉगिनवर परत जा', 'लॉगिन पर वापस जाएँ', 'Back to login'
+          )}
+        </button>` : `
+        <button class="btn ghost block" type="button" id="authSwitch">
+          ${reg ? t('haveAccount') : t('noAccount')}
+        </button>`}
+    </form>
+    <a class="btn sec block" href="/farmer" style="margin-top:16px">
+      ${t('farmerPortal')}
+    </a>
+  </main>`;
+}
+
+function bindAuth(app) {
+  $$(app, '[data-lang]').forEach(b => b.onclick = () => {
+    lang = b.dataset.lang;
+    LS.set('th:lang', lang);
+    document.documentElement.lang = lang;
+    render();
+  });
+
+  const f = $(app, '#authF');
+  if (!f) return;
+
+  const switchButton = $(app, '#authSwitch');
+  if (switchButton) switchButton.onclick = () => {
+    authMode = authMode === 'login' ? 'register' : 'login';
+    render();
+  };
+
+  const forgotButton = $(app, '#forgotPassword');
+  if (forgotButton) forgotButton.onclick = () => {
+    resetMobile = f.elements.mobile.value;
+    resetDevCode = '';
+    authMode = 'forgot';
+    render();
+  };
+
+  const backButton = $(app, '#backLogin');
+  if (backButton) backButton.onclick = () => {
+    authMode = 'login';
+    resetMobile = '';
+    resetDevCode = '';
+    render();
+  };
+
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(f));
+    const btn = $(f, 'button[type=submit]');
+    btn.disabled = true;
+
+    try {
+      if (authMode === 'forgot') {
+        const r = await api('POST', '/api/auth/password/request', {
+          mobile: d.mobile
+        });
+        resetMobile = d.mobile;
+        resetDevCode = r.devCode || '';
+        authMode = 'reset';
+        render();
+        return;
+      }
+
+      if (authMode === 'reset') {
+        if (d.password !== d.confirmPassword) {
+          throw new Error(authLabel(
+            'दोन्ही पासवर्ड सारखे असावेत.',
+            'दोनों पासवर्ड एक जैसे होने चाहिए.',
+            'Passwords must match.'
+          ));
+        }
+        await api('POST', '/api/auth/password/reset', {
+          mobile: d.mobile, code: d.code, password: d.password
+        });
+        authMode = 'login';
+        resetMobile = '';
+        resetDevCode = '';
+        render();
+        $(app, '#authErr').textContent = authLabel(
+          'पासवर्ड बदलला. नवीन पासवर्डने लॉगिन करा.',
+          'पासवर्ड बदल गया. नए पासवर्ड से लॉगिन करें.',
+          'Password changed. Log in with your new password.'
+        );
+        return;
+      }
+
+      await api('POST',
+        authMode === 'register' ? '/api/auth/register' : '/api/auth/login',
+        d
+      );
+      await boot();
+    } catch (err) {
+      const messages = {
+        OTP_DISABLED: authLabel(
+          'SMS सेवा सुरू नाही.', 'SMS सेवा चालू नहीं है.',
+          'SMS service is not configured.'
+        ),
+        OTP_WRONG: authLabel(
+          'OTP चुकीचा आहे.', 'OTP गलत है.', 'Incorrect OTP.'
+        ),
+        OTP_EXPIRED: authLabel(
+          'OTP संपला आहे. पुन्हा OTP मागवा.',
+          'OTP समाप्त हो गया. नया OTP माँगें.',
+          'OTP expired. Request a new OTP.'
+        ),
+        TOO_MANY_ATTEMPTS: authLabel(
+          'खूप प्रयत्न झाले. थोड्या वेळाने पुन्हा प्रयत्न करा.',
+          'बहुत प्रयास हुए. थोड़ी देर बाद कोशिश करें.',
+          'Too many attempts. Please try again later.'
+        )
+      };
+
+      const text = err.network ? te('NETWORK') :
+        messages[err.code] ||
+        (err.code ? errText(err) : err.message) ||
+        'Request failed';
+
+      $(app, '#authErr').innerHTML =
+        `<div class="note err">${esc(text)}</div>`;
+      btn.disabled = false;
+    }
+  };
+}
+
+
+
+
+
+
 async function boot() {
   S.loading = true; render();
   let me = null;

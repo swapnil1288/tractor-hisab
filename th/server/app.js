@@ -147,6 +147,129 @@ function createApp({ pool, env = process.env }) {
     await newSession(res, { kind: 'owner', owner_user_id: u.id, business_id: u.business_id }, 30);
     res.status(201).json({ ok: true });
   }));
+    // Request a password-reset OTP.
+  app.post('/api/auth/password/request', h(async (req, res) => {
+    const m = mobile(req.body.mobile);
+
+    await limit('owner-reset-ip:' + req.ip, 20, 3600);
+    await limit('owner-reset-mobile:' + m, 3, 600);
+
+    if (!['msg91', 'dev'].includes(otpProvider)) {
+      throw new HttpError(503, 'OTP_DISABLED');
+    }
+
+    const user = await pool.query(
+      'select id from owner_users where mobile=$1',
+      [m]
+    );
+
+    let devCode;
+
+    // Return the same response for an unknown mobile.
+    if (user.rowCount) {
+      const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+      const digest = sha('owner-reset:' + m + ':' + code + ':' + SECRET);
+
+      await tx(pool, async c => {
+        await c.query(
+          `insert into owner_password_resets
+             (mobile, code_hash, expires_at, attempts, consumed_at)
+           values ($1,$2,now() + interval '5 minutes',0,null)
+           on conflict (mobile) do update set
+             code_hash=excluded.code_hash,
+             expires_at=excluded.expires_at,
+             attempts=0,
+             consumed_at=null`,
+          [m, digest]
+        );
+
+        // If SMS delivery throws, the transaction rolls back.
+        await otp.send(env, m, code);
+      });
+
+      if (otpProvider === 'dev' && !prod) devCode = code;
+    }
+
+    res.json({ ok: true, ...(devCode ? { devCode } : {}) });
+  }));
+
+  // Verify OTP and change password atomically.
+  app.post('/api/auth/password/reset', h(async (req, res) => {
+    const m = mobile(req.body.mobile);
+    const code = req.body.code;
+    const pw = req.body.password;
+
+    await limit('owner-reset-verify-ip:' + req.ip, 30, 900);
+    await limit('owner-reset-verify-mobile:' + m, 10, 900);
+
+    if (typeof code !== 'string' || !/^\d{6}$/.test(code)) {
+      throw new HttpError(400, 'OTP_WRONG');
+    }
+    if (typeof pw !== 'string' || pw.length < 8 || pw.length > 200) {
+      throw new HttpError(400, 'PASSWORD_WEAK');
+    }
+
+    const result = await tx(pool, async c => {
+      const r = await c.query(
+        'select * from owner_password_resets where mobile=$1 for update',
+        [m]
+      );
+      const o = r.rows[0];
+
+      if (!o || o.consumed_at ||
+          new Date(o.expires_at).getTime() <= Date.now()) {
+        return { status: 400, code: 'OTP_EXPIRED' };
+      }
+      if (o.attempts >= 5) {
+        return { status: 429, code: 'TOO_MANY_ATTEMPTS' };
+      }
+
+      const digest = sha('owner-reset:' + m + ':' + code + ':' + SECRET);
+      const good = crypto.timingSafeEqual(
+        Buffer.from(digest, 'hex'),
+        Buffer.from(o.code_hash, 'hex')
+      );
+
+      if (!good) {
+        await c.query(
+          'update owner_password_resets set attempts=attempts+1 where mobile=$1',
+          [m]
+        );
+        // Return instead of throwing here so the attempt is committed.
+        return { status: 400, code: 'OTP_WRONG' };
+      }
+
+      const user = (await c.query(
+        'update owner_users set password_hash=$2 where mobile=$1 returning id',
+        [m, hashPassword(pw)]
+      )).rows[0];
+
+      await c.query(
+        'update owner_password_resets set consumed_at=now() where mobile=$1',
+        [m]
+      );
+
+      // Require a fresh login on all devices.
+      await c.query(
+        'delete from sessions where owner_user_id=$1',
+        [user.id]
+      );
+      await c.query(
+        'delete from rate_limits where key=$1',
+        ['login:' + m]
+      );
+
+      return { ok: true };
+    });
+
+    if (!result.ok) throw new HttpError(result.status, result.code);
+
+    res.clearCookie(COOKIE, {
+      httpOnly: true, secure: prod, sameSite: 'lax', path: '/'
+    });
+    res.json({ ok: true });
+  })); 
+  
   app.post('/api/auth/login', h(async (req, res) => {
     const m = mobile(req.body.mobile); await limit('login:' + m, 8, 900);
     const r = await pool.query('select * from owner_users where mobile=$1', [m]);
