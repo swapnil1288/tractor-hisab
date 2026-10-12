@@ -269,7 +269,7 @@ function createApp({ pool, env = process.env }) {
     });
     res.json({ ok: true });
   })); 
-  
+
   app.post('/api/auth/login', h(async (req, res) => {
     const m = mobile(req.body.mobile); await limit('login:' + m, 8, 900);
     const r = await pool.query('select * from owner_users where mobile=$1', [m]);
@@ -307,6 +307,61 @@ function createApp({ pool, env = process.env }) {
     res.json({ business, tractors, implements: implementsL, farmers: farmers.map(f => ({ ...f, farms: farms.filter(x => x.farmer_id === f.id), ...B.summarize([{ amountPaise: bal[f.id] || 0 }]) })),
       jobs, payments, statements, serverTime: new Date().toISOString() });
   }));
+
+  // Daily report settings: accessible only to the signed-in owner.
+  app.get('/api/report-settings', owner, h(async (req, res) => {
+    const r = await pool.query(
+      `select report_email, daily_report_enabled
+       from businesses where id=$1`,
+      [req.biz]
+    );
+    res.json(r.rows[0]);
+  }));
+
+  app.put('/api/report-settings', owner, h(async (req, res) => {
+    const raw = req.body.email;
+    if (typeof raw !== 'string' || raw.length > 254) {
+      throw new HttpError(400, 'EMAIL_INVALID');
+    }
+
+    const email = raw.trim();
+    const enabled = req.body.enabled;
+    if (typeof enabled !== 'boolean') {
+      throw new HttpError(400, 'INVALID');
+    }
+    if ((email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) ||
+        (enabled && !email)) {
+      throw new HttpError(400, 'EMAIL_INVALID');
+    }
+
+    const after = await tx(pool, async c => {
+      const before = await one(
+        c, 'select * from businesses where id=$1 for update', [req.biz]
+      );
+      const updated = (await c.query(
+        `update businesses
+         set report_email=$2, daily_report_enabled=$3
+         where id=$1
+         returning report_email, daily_report_enabled`,
+        [req.biz, email || null, enabled]
+      )).rows[0];
+
+      await audit(
+        c, req, 'update_report_settings', 'business',
+        req.biz,
+        {
+          report_email: before.report_email,
+          daily_report_enabled: before.daily_report_enabled
+        },
+        updated
+      );
+      return updated;
+    });
+
+    res.json(after);
+  }));
+
+
   app.put('/api/business', owner, mut(async (req, c) => {
     const before = await one(c, 'select * from businesses where id=$1 for update', [req.biz]);
     const lang = ['mr', 'hi', 'en'].includes(req.body.lang) ? req.body.lang : before.lang;

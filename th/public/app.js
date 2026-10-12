@@ -682,9 +682,24 @@ function viewEntries(s) {
   return bar({ title: t('entries') }) + `<main class="wrap"><div class="seg" role="tablist"><button data-et="job" class="${eTab === 'job' ? 'on' : ''}">${I.tractor}${t('newWork').split(' ').pop()}</button><button data-et="pay" class="${eTab === 'pay' ? 'on' : ''}">${I.rupee}${t('payment')}</button></div>
   ${rows.length ? `<div class="list">${rows.map(r => eTab === 'job' ? jobRow(r, s, true) : payRow(r, s, true)).join('')}</div>` : `<div class="card empty"><p>${t('none')}</p></div>`}</main>`;
 }
+
+
+
+
 function viewMore(s) {
   return bar({ title: t('more') }) + `<main class="wrap">
   <h3 class="grp">${t('business')}</h3><div class="list"><button class="row" data-act="bizEdit"><span class="mi">${I.edit}</span><span class="row-m"><span class="row-t">${esc(s.business.name)}</span><span class="row-s">${esc([s.business.owner_name, s.business.village, s.business.upi].filter(Boolean).join(' · '))}</span></span>${I.chev}</button></div>
+  <h3 class="grp">Daily Email Report</h3>
+<div class="list">
+  <button class="row" data-act="reportSettings">
+    <span class="mi">${I.edit}</span>
+    <span class="row-m">
+      <span class="row-t">ईमेल रिपोर्ट / Email Report</span>
+      <span class="row-s">दररोज रात्री 11:59 · India time</span>
+    </span>
+    ${I.chev}
+  </button>
+</div>
   <h3 class="grp">${t('tractors')}</h3><div class="list">${s.tractors.map(x => `<div class="row static"><span class="pic">${P.tractor}</span><span class="row-m"><span class="row-t">${esc(x.name)}${pendTag(x)}</span></span></div>`).join('')}<button class="row" data-act="addTractor"><span class="mi">${I.plus}</span><span class="row-t">${t('addTractor')}</span></button></div>
   <h3 class="grp">${t('implements')}</h3><div class="list">${s.implements.map(x => `<button class="row" data-act="editImpl" data-id="${x.id}"><span class="row-m"><span class="row-t">${esc(x.name)}${pendTag(x)}</span><span class="row-s">${rateL(x.rate_type)}</span></span><b class="num">${money(x.rate_paise)}</b>${I.edit}</button>`).join('')}<button class="row" data-act="addImpl"><span class="mi">${I.plus}</span><span class="row-t">${t('addImpl')}</span></button></div>
   <h3 class="grp">${t('language')}</h3><div class="card form">${langSeg()}</div>
@@ -1190,6 +1205,65 @@ async function logout() {
   });
 }
 const ACT = {
+    reportSettings: async () => {
+    try {
+      const settings = await api('GET', '/api/report-settings');
+
+      sheet(
+        'Daily Email Report',
+        `<label class="field">
+          <span>तुमचा ईमेल / Your email</span>
+          <input class="in" id="reportEmail" type="email"
+            maxlength="254" autocomplete="email"
+            value="${esc(settings.report_email || '')}">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="reportEnabled"
+            ${settings.daily_report_enabled ? 'checked' : ''}>
+          रोजचा रिपोर्ट ईमेलवर पाठवा
+        </label>
+        <p class="help">
+          Report starts sending at 11:59 PM IST.
+          Only data synced to the server is included.
+        </p>
+        <div id="reportError" role="alert"></div>`,
+        `<button class="btn pri block" id="saveReport">
+          ${t('save')}
+        </button>`,
+        (l, close) => {
+          $(l, '#saveReport').onclick = async () => {
+            const button = $(l, '#saveReport');
+            const input = $(l, '#reportEmail');
+            const enabled = $(l, '#reportEnabled').checked;
+            const email = input.value.trim();
+
+            if ((enabled && !email) ||
+                (email && !input.checkValidity())) {
+              $(l, '#reportError').textContent =
+                'योग्य ईमेल लिहा / Enter a valid email.';
+              return;
+            }
+
+            button.disabled = true;
+            try {
+              await api('PUT', '/api/report-settings', { email, enabled });
+              close();
+              toast('Email report settings saved.');
+            } catch (e) {
+              $(l, '#reportError').textContent = e.network
+                ? 'Internet connection required.'
+                : e.code === 'EMAIL_INVALID'
+                  ? 'Enter a valid email.'
+                  : errText(e);
+              button.disabled = false;
+            }
+          };
+        }
+      );
+    } catch (e) {
+      toast(e.network ? 'Internet connection required.' : errText(e));
+    }
+  },
   quick: openQuick, work: d => openWork(d), pay: d => openPay(d), finish: d => openFinish(d.id), job: d => openJob(d.id), payment: d => openPayment(d.id), addFarmer: () => openFarmer(), editFarmer: d => openFarmer(d.id),
   addFarm: d => reasonSheet(t('addFarm'), t('farmName'), n => enqueue('farm.create', 'POST', `/api/farmers/${d.id}/farms`, { id: uuid(), name: n }, { farmerId: d.id }), 1),
   statements: d => openStatements(d.id), shareBill: d => shareFarmerBill(d.id), outbox: openOutbox, logout, relogin: () => { S.biz = null; authMode = 'login'; render(); },

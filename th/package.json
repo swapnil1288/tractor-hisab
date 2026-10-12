@@ -4,7 +4,9 @@
   "private": true,
   "description": "Tractor Hisab – work, billing and payment records for tractor owners (Marathi / Hindi / English)",
   "main": "server/index.js",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node server/index.js",
     "migrate": "node server/db.js",
@@ -12,5 +14,10 @@
     "test": "node --test --test-concurrency=1 test/billing.test.js test/api.test.js",
     "test:e2e": "node --test --test-concurrency=1 test/e2e.test.js"
   },
-  "dependencies": { "express": "4.21.2", "pg": "8.13.1", "playwright-core": "1.48.2" }
+  "dependencies": {
+    "express": "4.21.2",
+    "nodemailer": "^10.1.0",
+    "pg": "8.13.1",
+    "playwright-core": "1.48.2"
+  }
 }
